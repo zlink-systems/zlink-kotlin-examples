@@ -1,0 +1,379 @@
+syntax: glob # for hg-git users
+
+# AI agent config files
+/AGENTS.md
+/GEMINI.md
+/CLAUDE.md
+
+# Generated build scripts and IDE generating files
+## autotools
+/Makefile
+core/builds/Makefile
+core/builds/deprecated-msvc/Makefile
+doc/Makefile
+libtool
+### automake
+Makefile.in
+.deps/
+.dirstamp
+### autoconf
+autom4te.cache
+aclocal.m4
+config.status
+config.log
+configure
+stamp-h1
+## CMake
+cmake-build-*/
+build-*/
+build/
+build_*/
+/compile_commands.json
+CMakeUserPresets.json
+/.cache/
+/.tools/
+/.pytest_cache/
+**/.pytest_cache/
+/Testing/
+/.pid
+/1
+/*.nettrace
+/*.etlx
+/client.err
+/client.out
+/server.err
+/server.out
+/gdb_server.err
+/gdb_server.out
+## Android
+core/builds/android/prefix
+## IntelliJ
+.idea/
+## Visual Code
+.vscode/
+## Local assistant settings
+.claude/
+.agents/
+.codex/
+
+## Common local and tool-generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*.tmp
+*.bak
+.env
+.env.*
+!.env.example
+.coverage
+coverage/
+htmlcov/
+.nyc_output/
+.eslintcache
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.venv/
+**/target/
+
+## other results-like folders
+bin/
+lib/
+!scripts/lib/
+!scripts/lib/framework-contract-documents.cjs
+obj/
+## gRPC dist for the router-compare bench: produced by
+## bindings/c/bench/with_routing/setup_grpc_dist.sh from a local gRPC install.
+bindings/c/bench/with_routing/grpc/grpc_dist/
+## Doxygen
+doxygen/
+## Packaging 
+core/packaging/nuget/*.nupkg
+
+# Test related build files
+libtestutil.a
+libunity.a
+
+# Some build outputs and temporal files
+*.log
+*.o
+*.gcno
+*.gcda
+*.gcov
+*.hprof
+*.ncb
+*.lo
+*.loT
+*.la
+*.exe
+*.html
+# mkdocs custom_dir 포크 파일 — 생성물이 아니라 커밋 대상인 소스다.
+!doc/site/overrides/**/*.html
+# guide 다이어그램(archify 렌더 SVG) — 사이트가 서빙하는 소스다.
+!framework/doc/framework/common/diagrams/*.html
+!framework/languages/shared_sample/zoneworld/client/*.html
+*.pdf
+*.ps
+*~
+.*~
+.libs
+__pycache__/
+*.py[cod]
+
+# /core/src
+## Ignore generated files in configuration process
+core/src/platform.hpp*
+core/src/libzlink.pc
+
+# /core/tools
+## Executable binaries are ignored
+core/tools/curve_keygen
+core/tools/**/logs/
+## Executable source files must be tracked
+!core/tools/*.[ch]
+!core/tools/*.[ch]pp
+
+# /core/tests
+## Test binaries and logs are ignored
+core/tests/test*
+core/tests/test*.log
+core/tests/test*.trs
+## Test source files must be tracked
+!core/tests/test*.[ch]
+!core/tests/test*.[ch]pp
+## Build script and documentations must be tracked
+!core/tests/CMakeLists.txt
+!core/tests/README.md
+
+# /core/unittests
+## Unit test binaries and logs are ignored
+core/unittests/unittest_*
+core/unittests/unittest*.log
+core/unittests/unittest*.trs
+## Unit test source files must be tracked
+!core/unittests/unittest*.[ch]
+!core/unittests/unittest*.[ch]pp
+## Build script and documentations must be tracked
+!core/unittests/CMakeLists.txt
+!core/unittests/README.md
+
+# check test log files
+test-suite*.log
+
+# /core/perf
+## Benchmarking binaries and result files are ignored
+core/perf/*_lat
+core/perf/*_thr
+core/perf/benchmark_*
+core/perf/results
+## Benchmarking source files must be tracked
+!core/perf/*.[ch]
+!core/perf/*.[ch]pp
+## Benchmarking tool scripts must be tracked
+!core/perf/*.py
+!core/perf/*.sh
+
+# /doc
+## Generated document files 
+doc/*.[137]
+doc/*.html
+doc/*.xml
+
+# external libraries and release archive files
+foreign/openpgm/*
+!foreign/openpgm/*.tar.bz2
+!foreign/openpgm/*.tar.gz
+!foreign/openpgm/Makefile.am
+zlink-*.tar.gz
+zlink-*.zip
+
+mybuild
+
+# Build output directories
+deps/
+dist/
+core/dist/
+build_check/
+build-*/
+.artifacts/
+core/perf/comparison/build
+benchmark_result.txt
+/test_*
+!/test_*.cpp
+tmp/
+!core/builds/
+core/builds/instance-asan/
+core/builds/auto-hwm-attach/
+# 어디에 있든 스크래치 디렉터리다 — 테스트 실행 로그, NuGet lock, codex 임시 작업
+# 폴더 등. 이름이 tmp/가 아니라 .tmp/·.codex-*-tmp.*라 위 규칙에 안 걸렸다.
+.tmp/
+**/.tmp/
+.codex-*-tmp.*/
+**/.codex-*-tmp.*/
+
+# bindings (language wrappers)
+## Node.js
+/node_modules/
+bindings/**/node_modules/
+bindings/**/npm-debug.log*
+bindings/**/yarn-debug.log*
+bindings/**/yarn-error.log*
+bindings/**/.npmrc
+bindings/**/.yarnrc
+bindings/**/.yarn/cache/
+bindings/**/.yarn/unplugged/
+bindings/**/.yarn/build-state.yml
+bindings/**/.pnp.cjs
+
+## Local benchmark debug output
+bindings/**/perf/single/debug-*.out.txt
+bindings/**/perf/single/debug-*.err.txt
+
+## Binding perf/build outputs
+bindings/**/perf/build/
+bindings/go/single
+bindings/go/multi
+bindings/**/.pnp.loader.mjs
+bindings/**/dist/
+bindings/node/dist-tools/dist
+bindings/**/build/
+bindings/**/.next/
+
+## Java (Maven/Gradle)
+bindings/**/target/
+bindings/**/.gradle/
+**/.gradle/
+dump.rdb
+bindings/**/build/
+bindings/**/*.class
+bindings/**/*.jar
+bindings/**/*.war
+bindings/**/*.ear
+bindings/**/.classpath
+bindings/**/.project
+bindings/**/.settings/
+
+## C#/.NET
+bindings/**/bin/
+bindings/**/obj/
+bindings/**/.vs/
+bindings/**/TestResults/
+bindings/**/*.user
+bindings/**/*.suo
+bindings/**/*.userosscache
+bindings/**/*.sln.docstates
+framework/languages/dotnet/**/bin/
+framework/languages/dotnet/**/obj/
+framework/languages/dotnet/**/.vs/
+framework/languages/dotnet/**/TestResults/
+framework/languages/dotnet/artifacts/
+framework/languages/dotnet/**/*.user
+framework/languages/dotnet/**/*.suo
+framework/languages/dotnet/**/*.userosscache
+framework/languages/dotnet/**/*.sln.docstates
+
+## Documentation output
+bindings/**/docs/_build/
+bindings/**/typedoc/
+bindings/**/_site/
+
+## C/C++ wrapper build artifacts
+bindings/**/CMakeFiles/
+bindings/**/CMakeCache.txt
+bindings/**/cmake_install.cmake
+bindings/**/Makefile
+bindings/**/compile_commands.json
+bindings/python/src/zlink/_native/_zlink_native*.so
+!bindings/java/gradle/wrapper/gradle-wrapper.jar
+
+## buildenv (auto-generated)
+buildenv/win/env.ps1
+
+# Local test environments
+.venv-bindings/
+local.tar
+local.tar.gz
+
+# Local benchmark outputs
+core/bench/**/results/
+bindings/*/benchwithzlink/results/
+bindings/*/perf/results/
+bindings/c/bench/with_grpc/log/
+bindings/c/bench/with_zmq/results/
+core/tests/scenario/**/result/
+
+# Local Gradle cache
+**/.gradle-codex/
+
+# Refactor execution logs
+
+# Perf Ralph-loop runtime logs and supervisor state
+doc/plan/perf/logs/
+doc/perf/plan/logs/
+
+# Clangd cache
+core/.cache/
+doc/site/site/
+framework/doc/site/site/
+.omx/
+.codex/*
+!.codex/agents/
+!.codex/agents/**
+!.codex/skills/
+!.codex/skills/**
+.codex/skills/.system/**
+!.codex/prompts/
+!.codex/prompts/**
+
+# clangd index cache (machine-generated, must not be tracked)
+framework/languages/cpp/.cache/
+
+# 루트에 생성되는 CMake 산출물
+/CMakeFiles/
+
+# 로컬 sync가 채우는 native 산출물 (릴리스 입력이 아닌 언어)
+# binding native/prebuild 출력은 패키지 생성 단계에서 다시 만든다.
+bindings/cpp/native/
+bindings/java/native/*
+!bindings/java/native/src/
+!bindings/java/native/src/**
+bindings/java/src/main/resources/native/
+bindings/node/native/*
+!bindings/node/native/src/
+!bindings/node/native/src/**
+bindings/dotnet/native/
+bindings/go/native/
+bindings/node/prebuilds/
+bindings/python/src/zlink/native/
+bindings/rust/native/
+
+# Python 빌드 산출물
+bindings/python/src/*.egg-info/
+bindings/python/src/zlink/_native/_zlink_perf_native.cpython-*.so
+
+# 세션 임시 조사물 (2026-08-27 — git add -A로 실수 유입된 이력 있음)
+scratchpad/
+framework/languages/shared_sample/zoneworld/client/.cache/
+
+## Framework runtime outputs (bench verify runs, CTest data) are never tracked
+framework/bench/tools/log/
+framework/languages/*/bench/with-grpc/log/
+framework/languages/*/bench/with-grpc/log/verify-*/
+framework/languages/cpp/Testing/
+
+## Unity WebGL adapter check (framework/languages/unity/webgl-adapter-check)
+## Everything the Editor generates: the import cache, the build output, the
+## scene the build script writes, and the .meta files a mutable file: package
+## gets on import.
+framework/languages/unity/webgl-adapter-check/Library/
+framework/languages/unity/webgl-adapter-check/Logs/
+framework/languages/unity/webgl-adapter-check/Temp/
+framework/languages/unity/webgl-adapter-check/UserSettings/
+framework/languages/unity/webgl-adapter-check/Builds/
+framework/languages/unity/webgl-adapter-check/Assets/Generated/
+framework/languages/unity/*.sln
+framework/languages/unity/**/*.csproj
+framework/languages/unity/**/*.meta

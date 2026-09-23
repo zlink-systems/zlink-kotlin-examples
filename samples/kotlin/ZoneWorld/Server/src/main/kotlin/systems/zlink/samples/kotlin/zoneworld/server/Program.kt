@@ -1,0 +1,264 @@
+package systems.zlink.samples.kotlin.zoneworld.server
+
+import java.nio.file.Path
+import java.time.Duration
+import org.springframework.beans.factory.ObjectProvider
+import org.springframework.boot.ApplicationRunner
+import org.springframework.boot.WebApplicationType
+import org.springframework.boot.autoconfigure.SpringBootApplication
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.boot.builder.SpringApplicationBuilder
+import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.context.ConfigurableApplicationContext
+import org.springframework.context.annotation.Bean
+import org.springframework.core.env.StandardEnvironment
+import systems.zlink.framework.actors.ZLinkActorClient
+import systems.zlink.framework.actors.ZLinkActorManager
+import systems.zlink.framework.channels.ZLinkRouteClient
+import systems.zlink.framework.configuration.ZLinkMeshNodeBuilder
+import systems.zlink.framework.configuration.ZLinkMessageFlowLogMode
+import systems.zlink.framework.kotlin.*
+import systems.zlink.framework.locations.redis.ZLinkRedisLocationOptions
+import systems.zlink.framework.locations.redis.ZLinkRedisLocationStore
+import systems.zlink.framework.locations.redis.ZLinkRedisRelocationOptions
+import systems.zlink.framework.locations.redis.ZLinkRedisRelocationStore
+import systems.zlink.framework.monitoring.ZLinkRouteMeshRuntime
+import systems.zlink.framework.runtime.host.ZLinkFrameworkRuntime
+import systems.zlink.framework.spots.ZLinkSpotManager
+import systems.zlink.framework.spring.EnableZLinkFramework
+import systems.zlink.framework.spring.ZLinkFrameworkConfigurer
+import systems.zlink.samples.kotlin.zoneworld.server.configuration.MaintenanceStore
+import systems.zlink.samples.kotlin.zoneworld.server.configuration.NodeCensus
+import systems.zlink.samples.kotlin.zoneworld.server.configuration.NodeMaintenanceState
+import systems.zlink.samples.kotlin.zoneworld.server.configuration.NodeRegistry
+import systems.zlink.samples.kotlin.zoneworld.server.configuration.SampleTopology
+import systems.zlink.samples.kotlin.zoneworld.server.gateway.GameSession
+import systems.zlink.samples.kotlin.zoneworld.server.ops.NodeLivenessObserver
+import systems.zlink.samples.kotlin.zoneworld.server.ops.OpsConsoleRegistry
+import systems.zlink.samples.kotlin.zoneworld.server.ops.OpsSession
+import systems.zlink.samples.kotlin.zoneworld.server.zone.PlayerActor
+import systems.zlink.samples.kotlin.zoneworld.server.zone.PlayerActorFactory
+import systems.zlink.samples.kotlin.zoneworld.server.zone.PlayerActorRelocationAdapter
+import systems.zlink.samples.kotlin.zoneworld.server.zone.ZoneBootstrap
+import systems.zlink.samples.kotlin.zoneworld.server.zone.ZoneEntrySpot
+import systems.zlink.samples.kotlin.zoneworld.server.zone.ZoneSpot
+import systems.zlink.samples.kotlin.zoneworld.server.zone.ZoneStatusReporter
+import systems.zlink.samples.kotlin.zoneworld.shared.Messages
+import systems.zlink.samples.kotlin.zoneworld.shared.ZoneWorldNames
+
+@EnableZLinkFramework
+@EnableConfigurationProperties(SampleTopology::class)
+@SpringBootApplication(
+    proxyBeanMethods = false,
+    scanBasePackages = ["systems.zlink.samples.kotlin.zoneworld.server"],
+)
+class Program {
+    @Bean
+    fun locationStore(topology: SampleTopology): ZLinkRedisLocationStore =
+        ZLinkRedisLocationStore(
+            ZLinkRedisLocationOptions()
+                .setConnectionString(topology.redisValue())
+                .setKeyPrefix("${topology.prefixValue()}locations:")
+                .setCommandTimeout(Duration.ofMillis(500))
+        )
+
+    @Bean(destroyMethod = "close")
+    fun relocationStore(topology: SampleTopology) =
+        ZLinkRedisRelocationStore(
+            ZLinkRedisRelocationOptions()
+                .setConnectionString(topology.redisValue())
+                .setKeyPrefix("${topology.prefixValue()}relocation:")
+                .setCommandTimeout(Duration.ofMillis(500))
+        )
+
+    @Bean(destroyMethod = "close")
+    fun maintenanceStore(topology: SampleTopology) = MaintenanceStore(topology)
+
+    @Bean fun maintenanceState() = NodeMaintenanceState()
+
+    @Bean fun nodeCensus() = NodeCensus()
+
+    @Bean fun nodeRegistry() = NodeRegistry()
+
+    @Bean
+    fun opsConsoleRegistry(registry: NodeRegistry) =
+        OpsConsoleRegistry().also { consoles ->
+            registry.onChanged { node ->
+                consoles.broadcast(
+                    Messages.NodeStatusNotify(
+                        node.nodeId,
+                        node.registered,
+                        node.connected,
+                        node.maintenance,
+                        node.zones,
+                        node.playerCount,
+                    )
+                )
+            }
+            registry.onAlert { alert ->
+                consoles.record(alert)
+                consoles.broadcast(alert)
+            }
+        }
+
+    @Bean
+    fun framework(
+        topology: SampleTopology,
+        locations: ZLinkRedisLocationStore,
+        relocation: ZLinkRedisRelocationStore,
+    ): ZLinkFrameworkConfigurer = ZLinkFrameworkConfigurer { options ->
+        topology.validate()
+        options.configureLocations()
+        options.addLocationStore(locations)
+        options.addRelocationStore(relocation)
+        options.addHandlersFromPackageOf<Program>()
+        // --8<-- [start:doc-monitoring-flow]
+        options.configureDispatch().messageFlow(ZLinkMessageFlowLogMode.NORMAL)
+        // --8<-- [end:doc-monitoring-flow]
+        if (topology.isRole("zone") && topology.isSubscriberOnly()) {
+            options
+                .addFanoutChannel(ZoneWorldNames.BROADCAST_CHANNEL)
+                .enableSubscriber()
+                .addHandlerGroup(ZoneWorldNames.BROADCAST_HANDLER_GROUP)
+            return@ZLinkFrameworkConfigurer
+        }
+        val mesh: ZLinkMeshNodeBuilder =
+            options
+                .addRouteMesh(ZoneWorldNames.MESH)
+                .listen(topology.meshValue())
+                // A zone node names its application identity in the routing id prefix; the
+                // framework appends a per-process UUID, so a replacement started for the same
+                // node id still publishes a routing id no earlier process ever held.
+                .setRoutingIdPrefix(
+                    if (topology.isRole("zone")) "zn" else "zoneworld-${topology.roleValue()}"
+                )
+        topology.meshAdvertiseHost?.takeIf { it.isNotBlank() }?.let(mesh::setAdvertiseHost)
+        when (topology.roleValue()) {
+            "gateway" -> {
+                mesh.objects().client()
+                options
+                    .addStreamNode(ZoneWorldNames.GATEWAY_STREAM)
+                    .bind(topology.streamValue())
+                    .enableActorDispatch()
+                    .registerSession<GameSession>()
+            }
+            "zone" -> {
+                // --8<-- [start:doc-multi-channel-register]
+                mesh
+                    .channelName(ZoneWorldNames.ZONE_CHANNEL)
+                    .server()
+                    .addHandlerGroup(ZoneWorldNames.ZONE_CHANNEL)
+                mesh.channelName(ZoneWorldNames.REPORT_CHANNEL).client()
+                // --8<-- [end:doc-multi-channel-register]
+                // --8<-- [start:doc-zw-node-register]
+                mesh
+                    .objects()
+                    .server()
+                    .addEntrySpot<ZoneEntrySpot>()
+                    .addSpotFactory<ZoneSpot>(ZoneWorldNames.ZONE_SPOT_TYPE) {
+                        stableTypeLimit(2).disableRelocation()
+                    }
+                    .addActorFactory<PlayerActor, PlayerActorFactory>(
+                        ZoneWorldNames.PLAYER_ACTOR_TYPE
+                    ) {
+                        preserveStateWith<PlayerActor, PlayerActorRelocationAdapter>()
+                    }
+                // --8<-- [end:doc-zw-node-register]
+                // --8<-- [start:doc-zw-fanout-subscribe]
+                options
+                    .addFanoutChannel(ZoneWorldNames.BROADCAST_CHANNEL)
+                    .enableSubscriber()
+                    .addHandlerGroup(ZoneWorldNames.BROADCAST_HANDLER_GROUP)
+                // --8<-- [end:doc-zw-fanout-subscribe]
+            }
+            "ops" -> {
+                mesh
+                    .channelName(ZoneWorldNames.REPORT_CHANNEL)
+                    .server()
+                    .addHandlerGroup(ZoneWorldNames.OPS_HANDLER_GROUP)
+                mesh.objects().client()
+                // --8<-- [start:doc-zw-fanout-publisher]
+                options
+                    .addFanoutChannel(ZoneWorldNames.BROADCAST_CHANNEL)
+                    .setRoutingIdPrefix("zoneworld-kotlin-ops-broadcast")
+                    .enablePublisher()
+                // --8<-- [end:doc-zw-fanout-publisher]
+                options
+                    .addStreamNode(ZoneWorldNames.OPS_STREAM)
+                    .bind(topology.streamValue())
+                    .enableActorDispatch()
+                    .registerSession<OpsSession>()
+            }
+        }
+    }
+
+    @Bean
+    fun runtimeEvidence(provider: ObjectProvider<ZLinkFrameworkRuntime>, topology: SampleTopology) =
+        ApplicationRunner {
+            val runtime = provider.ifAvailable
+            println(
+                "framework lifecycle role=${topology.roleValue()} state=${runtime?.status()?.state()}"
+            )
+            if (topology.isSubscriberOnly()) {
+                println("topology=ready node=${topology.nodeValue()} zones=")
+                return@ApplicationRunner
+            }
+            println("runtime event mesh=${ZoneWorldNames.MESH} state=SERVING")
+        }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "sample", name = ["role"], havingValue = "ops")
+    fun nodeLivenessObserver(runtime: ZLinkRouteMeshRuntime, registry: NodeRegistry) =
+        NodeLivenessObserver(runtime, registry)
+
+    @Bean
+    @ConditionalOnExpression("'\${sample.role:}' == 'zone' && !\${sample.subscriber-only:false}")
+    fun zoneBootstrap(
+        topology: SampleTopology,
+        spots: ZLinkSpotManager,
+        actors: ZLinkActorManager,
+        actorClient: ZLinkActorClient,
+        maintenance: NodeMaintenanceState,
+        store: MaintenanceStore,
+        census: NodeCensus,
+        reporter: ZoneStatusReporter,
+    ) = ZoneBootstrap(topology, spots, actors, actorClient, maintenance, store, census, reporter)
+
+    @Bean
+    @ConditionalOnExpression("'\${sample.role:}' == 'zone' && !\${sample.subscriber-only:false}")
+    fun zoneReporter(
+        topology: SampleTopology,
+        routes: ZLinkRouteClient,
+        census: NodeCensus,
+        maintenance: NodeMaintenanceState,
+    ) = ZoneStatusReporter(topology, routes, census, maintenance)
+
+    companion object {
+        fun run(configPath: String): ConfigurableApplicationContext {
+            val environment =
+                StandardEnvironment().apply {
+                    propertySources.remove(
+                        StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME
+                    )
+                    propertySources.remove(
+                        StandardEnvironment.SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME
+                    )
+                }
+            val builder =
+                SpringApplicationBuilder(Program::class.java)
+                    .environment(environment)
+                    .properties(
+                        "spring.config.location=${Path.of(configPath).toAbsolutePath().toUri()}"
+                    )
+                    .web(WebApplicationType.NONE)
+            builder.application().setKeepAlive(true)
+            return builder.run()
+        }
+    }
+}
+
+fun main(args: Array<String>) {
+    Program.run(SampleTopology.configPath(args))
+    Thread.currentThread().join()
+}

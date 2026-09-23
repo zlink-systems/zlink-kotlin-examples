@@ -1,0 +1,48 @@
+package systems.zlink.samples.kotlin.tictactoe.server.play.infrastructure.zlink.sessions
+
+import systems.zlink.framework.kotlin.ZLinkSuspendingSession
+import systems.zlink.framework.kotlin.await
+import systems.zlink.framework.kotlin.kotlin
+import systems.zlink.framework.messaging.ZLinkMessage
+import systems.zlink.framework.streams.ZLinkSessionActor
+import systems.zlink.framework.streams.ZLinkSessionContext
+import systems.zlink.framework.streams.ZLinkSessionDispatchContext
+import systems.zlink.framework.streams.ZLinkSessionPacketDispatcher
+
+// --8<-- [start:doc-session]
+class PlaySession(
+    private val context: ZLinkSessionContext,
+    private val handlers: ZLinkSessionPacketDispatcher<ZLinkSessionContext>,
+) : ZLinkSuspendingSession() {
+    override fun context(): ZLinkSessionContext = context
+
+    override suspend fun onDisconnectedSuspending() {
+        // --8<-- [start:session-disconnect-notify]
+        context.actors().bound().forEach { actor -> actor.notifyDisconnected().await() }
+        // --8<-- [end:session-disconnect-notify]
+    }
+
+    override suspend fun onDispatchSuspending(
+        header: ZLinkSessionDispatchContext,
+        payload: ZLinkMessage,
+    ) {
+        if (handlers.tryHandle(context, header, payload).await()) {
+            return
+        }
+        requireActor(header.packetName()).kotlin().relay(header, payload).await()
+    }
+
+    private fun requireActor(packetName: String): ZLinkSessionActor =
+        when (context.actors().bound().size) {
+            1 -> context.actors().bound()[0]
+            0 ->
+                throw IllegalStateException(
+                    "AuthenticateReq is required before play packet '$packetName'"
+                )
+            else ->
+                throw IllegalStateException(
+                    "Exactly one actor must be bound before play packet '$packetName'"
+                )
+        }
+}
+// --8<-- [end:doc-session]

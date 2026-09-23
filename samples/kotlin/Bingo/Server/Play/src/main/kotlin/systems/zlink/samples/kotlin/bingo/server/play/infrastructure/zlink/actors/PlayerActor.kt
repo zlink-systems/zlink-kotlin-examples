@@ -1,0 +1,91 @@
+package systems.zlink.samples.kotlin.bingo.server.play.infrastructure.zlink.actors
+
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionStage
+import org.slf4j.LoggerFactory
+import systems.zlink.framework.actors.ZLinkActor
+import systems.zlink.framework.actors.ZLinkActorContext
+import systems.zlink.framework.actors.ZLinkActorJoinCompletion
+import systems.zlink.framework.actors.ZLinkActorJoinOperationId
+import systems.zlink.framework.kotlin.await
+import systems.zlink.framework.kotlin.decode
+import systems.zlink.framework.kotlin.kotlin
+import systems.zlink.samples.kotlin.bingo.shared.contracts.BingoRoomJoinRes
+
+class PlayerActor(private val actorId: String, private val context: ZLinkActorContext) :
+    ZLinkActor {
+    private val logger = LoggerFactory.getLogger(PlayerActor::class.java)
+
+    var displayName: String = actorId
+        private set
+
+    var roomId: String = ""
+        private set
+
+    private var pendingRoomId: String? = null
+    private val completedJoinOperations = mutableSetOf<ZLinkActorJoinOperationId>()
+    var destroyAfterEntrySpotJoin: Boolean = false
+        private set
+
+    var disconnected: Boolean = false
+        private set
+
+    fun actorId(): String = actorId
+
+    override fun context(): ZLinkActorContext = context
+
+    fun setDisplayName(value: String) {
+        displayName = value
+    }
+
+    fun joinRoom(value: String) {
+        roomId = value
+    }
+
+    fun trackDeferredJoin(value: String) {
+        check(pendingRoomId == null) { "a room join is already pending" }
+        pendingRoomId = value
+    }
+
+    override fun onJoinCompleted(completion: ZLinkActorJoinCompletion): CompletionStage<Void> {
+        val operationId =
+            when (completion) {
+                is ZLinkActorJoinCompletion.Accepted -> completion.operationId()
+                is ZLinkActorJoinCompletion.Rejected -> completion.operationId()
+                is ZLinkActorJoinCompletion.Failed -> completion.operationId()
+            }
+        if (!completedJoinOperations.add(operationId)) {
+            return CompletableFuture.completedFuture(null)
+        }
+
+        var matchedRoomId = pendingRoomId
+        pendingRoomId = null
+        if (completion !is ZLinkActorJoinCompletion.Accepted) {
+            return CompletableFuture.completedFuture(null)
+        }
+
+        val joined = completion.reply().decode<BingoRoomJoinRes>()
+        if (matchedRoomId.isNullOrBlank()) {
+            matchedRoomId = joined.state.roomId
+        }
+        joinRoom(matchedRoomId.orEmpty())
+        logger.info("bingo-lifecycle entry-leave actor={}", actorId)
+        return CompletableFuture.completedFuture(null)
+    }
+
+    fun markForDestroyAfterRoomLeave() {
+        destroyAfterEntrySpotJoin = true
+    }
+
+    fun markDisconnected() {
+        disconnected = true
+    }
+
+    suspend fun push(message: Any) {
+        try {
+            context.boundSession().kotlin().send(message).await()
+        } catch (_: RuntimeException) {
+            // A stale player session cannot fail the room or block later recipients.
+        }
+    }
+}

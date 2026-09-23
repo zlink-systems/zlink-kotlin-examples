@@ -1,0 +1,745 @@
+# Kotlin Tutorial
+
+기능별 가이드가 코드를 읽어 가는 프로그램이다. Channel, Spot, Actor와 STREAM을 담았다.
+
+Kotlin source는 이 Gradle project의 language subdirectory에 있다. [`../../quickstart/`](../../quickstart/)도
+같은 방식으로 language subproject를 나눈다.
+
+## quickstart·샘플과 나눠 두는 이유
+
+| | 목적 |
+|---|---|
+| [`../../quickstart/`](../../quickstart/) | 설치부터 첫 응답까지. 기능을 더하지 않는다 |
+| **`tutorial/kotlin/`** (여기) | 기능을 차례로 쌓는다. 기능별 가이드가 이 코드를 읽는다 |
+| [`../../samples/`](../../samples/) | 완결된 업무 흐름을 보이는 application |
+
+## 전제 조건
+
+- **JDK 25 이상.** 배포된 `zlink-framework-core`(버전은
+  [`../gradle/libs.versions.toml`](../gradle/libs.versions.toml)의 `zlinkFramework` 참고)의
+  class file 버전이 69(Java 25)다. 이 프로그램은 Temurin 25.0.4.1로 빌드하고 실행했다.
+  **`installDist`로 만든 실행 script는 `JAVA_HOME`을 그대로 쓰므로 실행 시점의 `JAVA_HOME`도
+  JDK 25여야 한다.**
+
+  이 Gradle 프로젝트는 JDK를 자동으로 내려받는 toolchain resolver(예:
+  `org.gradle.toolchains.foojay-resolver-convention`)를 설정하지 않는다. JDK 25가 없으면
+  [Temurin 25](https://adoptium.net/)를 받아 설치하고 `JAVA_HOME`을 그 경로로 둔다.
+
+  ```bash
+  # Linux/WSL
+  export JAVA_HOME=/path/to/jdk-25.0.4.1+1
+  ```
+
+  ```powershell
+  # Windows PowerShell
+  $env:JAVA_HOME = "C:\path\to\jdk-25.0.4.1+1"
+  ```
+
+- **Docker Desktop.** Redis는 저장소 checkout 없이 Docker 컨테이너 하나로 띄운다(아래
+  "빌드" 앞에 실행한다).
+
+  ```bash
+  docker run --rm -p 6379:6379 redis
+  ```
+
+이 밖에는 필요 없다. `zlink-framework-core`의 POM이 binding `systems.zlink:zlink`을
+가리키고 그 jar가 Linux·Windows native를 함께 싣기 때문에(`LibraryLoader`가 jar 안에서 찾아
+적재한다), Windows에서 별도 native 설정도 필요 없다.
+
+## 내려받기와 설치
+
+문서가 보여주는 코드와 독자가 Maven Central에서 받는 라이브러리를 같은 것으로 유지한다.
+이 tutorial은 `zlink-java-examples` 저장소의 `tutorial/kotlin/`에서 실행하고
+`systems.zlink:zlink-framework-*` 패키지만 참조한다. `kotlin/`은 `../`(tutorial 루트)의 `settings.gradle.kts`·
+`gradle/libs.versions.toml`·wrapper와 함께 옮기면 그대로 빌드된다. 버전은
+[`../gradle/libs.versions.toml`](../gradle/libs.versions.toml)에 있다. 별도로 내려받거나
+설치할 것은 없다 — Gradle wrapper가 Gradle을, Gradle이 위 패키지를 Maven Central에서
+내려받는다.
+
+아래 명령은 `zlink-java-examples` 저장소를 clone한 뒤 tutorial 루트를 현재 위치로 두고
+실행한다. `../` 아래에 이 README가 있는 `tutorial/kotlin/`이 있다.
+
+## 빌드
+
+```bash title="linux"
+./gradlew :kotlin:Server:installDist :kotlin:Client:installDist :kotlin:HttpClient:installDist
+```
+
+```powershell title="windows"
+.\gradlew.bat :kotlin:Server:installDist :kotlin:Client:installDist :kotlin:HttpClient:installDist
+```
+
+## 실행
+
+터미널 두 개. Server를 먼저 실행한다.
+
+```bash title="linux"
+kotlin/Server/build/install/Server/bin/Server
+kotlin/Client/build/install/Client/bin/Client
+```
+
+```powershell title="windows"
+.\kotlin\Server\build\install\Server\bin\Server.bat
+.\kotlin\Client\build\install\Client\bin\Client.bat
+```
+
+STREAM 단계의 외부 client는 세 번째 subproject다.
+
+```bash
+./gradlew :kotlin:StreamClient:installDist
+kotlin/StreamClient/build/install/StreamClient/bin/StreamClient
+```
+
+HTTP client 단계는 mesh 밖의 HTTP client가 Client와 Server의 HTTP 표면을 호출하는
+별도 subproject다. Kotlin wrapper의 `zlinkHttpClient { }` DSL과 coroutine 종결자를
+사용하며, 아래 출력은 Server와 Client를 실행한 뒤 프로그램을 실제로 실행해 얻은 값이다.
+
+```bash title="linux"
+./gradlew :kotlin:HttpClient:installDist
+kotlin/HttpClient/build/install/HttpClient/bin/HttpClient
+```
+
+```powershell title="windows"
+.\gradlew.bat :kotlin:HttpClient:installDist
+.\kotlin\HttpClient\build\install\HttpClient\bin\HttpClient.bat
+```
+
+```text
+first request: p1 rookie
+request shaping: status 200 weight 2
+json body: player 200 room 47e7f688-6185-41b9-8e16-c22ef0dcd075 chat 202
+response kinds: typed 200 raw application/json fetch speedy-p2
+compressed response: 200 encoding-removed true
+redirect: 200 p1
+basic auth: without 401 with 200
+download stream: chunks 2 bytes 132
+upload stream: imported 3
+error kinds: bad request INTERNAL_FAILURE connection refused UNAVAILABLE
+```
+
+## 검증
+
+Server가 peer를 받아들이면 이 줄이 찍힌다.
+
+```
+INFO 38136 --- [m-raw-mesh-game] s.z.f.r.binding.ZLinkJavaRawMeshNode     : ZLINK_FRAMEWORK_PEER_READY mesh=game peer=game-1926e18d-0ff9-4114-8168-2587672b7865
+```
+
+Client가 뜬 뒤 아래 호출이 `200`과 함께 profile을 돌려주면 성공이다("단계"의 1번 참고).
+
+```bash title="linux"
+curl http://127.0.0.1:5380/players/p1/profile
+# 200
+# {"playerId":"p1","nickname":"rookie","level":1}
+```
+
+```powershell title="windows"
+Invoke-RestMethod -Uri 'http://127.0.0.1:5380/players/p1/profile'
+# playerId nickname level
+# -------- -------- -----
+# p1       rookie   1
+```
+
+## 문제 해결
+
+- **`UnsupportedClassVersionError`.** 실행 시점의 `JAVA_HOME`이 JDK 25보다 낮다는 뜻이다.
+  "전제 조건"대로 `JAVA_HOME`을 JDK 25로 맞춘다.
+
+- **`No matching toolchain found`.** 빌드 머신에 JDK 25가 전혀 없다는 뜻이다. "전제
+  조건"의 Temurin 25 설치 절차를 따른다.
+
+- **`Connection refused` (Redis, 6379).** Docker가 떠 있지 않거나 컨테이너가 아직
+  기동 중이다. `docker run --rm -p 6379:6379 redis`를 다른 터미널에 띄워 두고, 로그에
+  `Ready to accept connections`가 뜬 뒤 tutorial을 실행한다.
+
+- **`Address already in use` (5380/5381/7601/7602/7611/7612/7621).** 이전 실행이 아직
+  떠 있다. 두 process를 모두 종료한 뒤 다시 실행한다.
+
+- **`java.lang.IllegalStateException: Missing native symbol 'zlink_publish'. Loaded
+  libzlink is incompatible with this Java binding.`** `ZLINK_LIBRARY_PATH`로 다른
+  버전의 `zlink.dll`/`libzlink.so`를 가리켰을 때 난다. 이 변수를 지우고 jar 안에 실린
+  native를 그대로 쓴다.
+
+- **`ZLinkConfigurationException: MeshNode descriptor publication failed [mesh=game,
+  status=REJECTED_CONFLICT]`, 또는 프로필 호출이 계속 `503 one-way route is not
+  connected`를 낸다.** 같은 Redis를 다른 실행이 먼저 써서 `zlink-tutorial-kotlin:` 키
+  아래 mesh descriptor가 남아 있을 때 나온다. 그 키만 지우고 Server부터 다시 실행한다 —
+  다른 언어의 tutorial은 건드리지 않는다.
+
+  ```bash
+  redis-cli --scan --pattern 'zlink-tutorial-kotlin:*' | xargs -r redis-cli del
+  ```
+
+## 프로젝트
+
+| 프로젝트 | 역할 |
+|---|---|
+| `Shared` | 두 쪽이 함께 쓰는 message 계약 |
+| `Server` | channel handler와 filter를 실행하고 Spot 둘(방과 큐)을 호스팅한다. 운영 endpoint 하나만 HTTP로 연다 |
+| `Client` | HTTP를 받아 mesh로 호출한다 |
+| `StreamClient` | mesh 밖의 client. framework가 아니라 connector 하나만 의존한다 |
+| `HttpClient` | mesh 밖의 client. `zlink-http-client-kotlin` wrapper만 의존한다 |
+
+## 포트
+
+| 용도 | 포트 |
+|---|---|
+| Client HTTP | 5380 |
+| Server HTTP (운영 endpoint) | 5381 |
+| RouteMesh listen (Server) | 7601 |
+| RouteMesh listen (Client) | 7602 |
+| ClientServer (Server) | 7611 |
+| Fanout publisher (Client) | 7612 |
+| Stream node (Server) | 7621 |
+
+## 단계
+
+각 기능은 따로 읽어도 된다.
+
+### 1. Channel 메시징 — RouteMesh
+
+요청하는 쪽이 node를 고르지 않는다. 채널 이름만 주면 그 채널을 담당하는 node가 받는다.
+
+```bash
+curl http://127.0.0.1:5380/players/p1/profile
+# 200
+# {"playerId":"p1","nickname":"rookie","level":1}
+
+curl -i -X POST http://127.0.0.1:5380/players/p1/logins
+# HTTP/1.1 202
+```
+
+두 번째는 응답을 기다리지 않는 단방향 호출이다. Server 로그에 남는다.
+
+```
+INFO 38136 --- [atcher-worker-1] s.z.t.server.channel.RecordLoginHandler  : login recorded: p1
+```
+
+### 2. Channel 메시징 — node 직접 호출
+
+channel을 거치지 않는 경로다. 받는 쪽은 `mesh.addRouteRequestHandler`로 mesh에 바로
+등록하고, 부르는 쪽은 node의 routing id를 지정한다. 운영 명령에만 쓴다.
+
+```bash
+curl http://127.0.0.1:5380/ops/nodes/game-server-1/status
+# 200
+# {"meshName":"game","channelName":"(none)","calledBy":"game-1926e18d-0ff9-4114-8168-2587672b7865","uptime":"31s","processId":38136}
+
+curl -i http://127.0.0.1:5380/ops/nodes/no-such-node/status
+# HTTP/1.1 404
+# {"error":"not_found","message":"RouteMesh node request target was not found: no-such-node"}
+# channel 호출과 달리 후보를 고르지 않으므로 그대로 실패한다.
+# 404와 본문은 7절의 ZLinkErrorResponse가 낸 것이다.
+```
+
+`channelName`이 채널 이름이 아니라는 것이 요점이다. channel이 관여하지 않았다는 뜻이다.
+`calledBy`는 부른 쪽 node의 routing id이고, 나머지 값은 답한 process 하나의 것이다.
+
+이 호출에는 등록 쪽 조건이 둘 있다.
+
+1. 받는 node가 `setRoutingId`로 id를 고정해야 한다. 고정하지 않으면 생성된 id라 부르는
+   쪽이 적을 수 없다.
+2. `peerConnections().connect(RoutingId, endpoint)`를 쓴다면, 받는 node가
+   `setAdvertiseHost`로 **부르는 쪽이 적은 것과 같은 endpoint 문자열**을 알려야 한다.
+   이 형태의 connect는 상대가 알리는 endpoint를 문자열 그대로 비교한다.
+   `listen("tcp://0.0.0.0:7601")`만 해 두면 node는 `tcp://0.0.0.0:7601`을 알리는데 부르는
+   쪽은 `tcp://127.0.0.1:7601`을 적으므로 peer가 거부된다.
+
+`connect(RoutingId, endpoint)`는 **node 직접 호출의 전제가 아니다.** peer가 붙고 나면
+`connect(endpoint)`만 쓴 client도 routing id로 그 node를 부를 수 있다. 확인한 결과다.
+
+```bash
+# client가 mesh.peerConnections().connect("tcp://127.0.0.1:7601")만 한 상태
+curl http://127.0.0.1:5380/ops/nodes/game-server-1/status
+# 200
+# {"meshName":"game","channelName":"(none)","calledBy":"game-26a0e074-98ef-4f58-95f9-383855e5c7a2","uptime":"20s","processId":47652}
+```
+
+RoutingId를 적는 쪽은 "이 endpoint에는 이 node가 있어야 한다"는 기대를 거는 것이다.
+
+2번을 빠뜨리면 호출이 이렇게 끝난다.
+
+```
+systems.zlink.framework.errors.ZLinkFrameworkException: RouteMesh node request route is not connected: game-server-1
+```
+
+이때 channel 호출도 같이 막힌다. peer가 서지 않아 후보가 없기 때문이다.
+
+```
+systems.zlink.framework.errors.ZLinkFrameworkException: one-way target was not found
+```
+
+### 3. Channel 메시징 — ClientServer
+
+호출 코드는 위와 같다. 다른 것은 **누가 받느냐**다. 부르는 쪽이 연결한 서버가 받는다.
+
+```bash
+curl -i -X POST http://127.0.0.1:5380/players/p1/tickets
+# HTTP/1.1 200
+# ticket-p1
+```
+
+### 4. Channel 메시징 — Fanout
+
+보내는 쪽이 받는 node를 모른다. 구독한 node가 모두 받는다.
+
+```bash
+curl -i -X POST http://127.0.0.1:5380/notices \
+  -H 'Content-Type: application/json' -d '{"message":"scheduled maintenance"}'
+# HTTP/1.1 202
+```
+
+Server 로그에 남는다.
+
+```
+INFO 38136 --- [atcher-worker-1] s.z.t.s.c.MaintenanceNoticeSubscriber    : maintenance notice: scheduled maintenance
+```
+
+### 5. Filter
+
+등록한 filter가 이 node가 받는 handler를 감싼다. 위 네 호출을 모두 한 뒤의 Server 로그다.
+
+```
+INFO 38136 --- [  virtual-73277] s.z.t.server.dispatch.CallLogFilter      : dispatch start: GetPlayerProfile
+INFO 38136 --- [atcher-worker-1] s.z.t.server.dispatch.CallLogFilter      : dispatch done: GetPlayerProfile in 0ms
+INFO 38136 --- [  virtual-73480] s.z.t.server.dispatch.CallLogFilter      : dispatch start: RecordLogin
+INFO 38136 --- [atcher-worker-1] s.z.t.server.channel.RecordLoginHandler  : login recorded: p1
+INFO 38136 --- [atcher-worker-1] s.z.t.server.dispatch.CallLogFilter      : dispatch done: RecordLogin in 1ms
+INFO 38136 --- [  virtual-73655] s.z.t.server.dispatch.CallLogFilter      : dispatch start: IssueSessionTicket
+INFO 38136 --- [atcher-worker-1] s.z.t.server.dispatch.CallLogFilter      : dispatch done: IssueSessionTicket in 1ms
+INFO 38136 --- [  virtual-74590] s.z.t.server.dispatch.CallLogFilter      : dispatch start: MaintenanceNotice
+INFO 38136 --- [atcher-worker-1] s.z.t.s.c.MaintenanceNoticeSubscriber    : maintenance notice: scheduled maintenance
+INFO 38136 --- [atcher-worker-1] s.z.t.server.dispatch.CallLogFilter      : dispatch done: MaintenanceNotice in 2ms
+INFO 38136 --- [  virtual-74878] s.z.t.server.dispatch.CallLogFilter      : dispatch start: GetNodeStatus
+INFO 38136 --- [atcher-worker-1] s.z.t.server.dispatch.CallLogFilter      : dispatch done: GetNodeStatus in 10ms
+```
+
+RouteMesh channel, ClientServer channel, classic fanout, node 직접 호출이 모두 걸린다.
+Spot·Actor handler는 걸리지 않는다.
+
+### 6. 실행 중 weight 바꾸기
+
+등록은 기동 때 끝난다. **weight는 예외다.** 이 node가 돌면서 바꿀 수 있는 값이고, 바꾸면
+다른 node가 새 호출의 후보로 이 node를 고르는지가 달라진다. `Server`가 5381을 여는 이유가
+이것 하나다.
+
+주입해 쓰는 것은 Java 표면 `ZLinkRouteMeshRuntimeOptions`다. Kotlin 전용 대응물은 없다.
+`weight()`가 getter/setter 형태가 아니라 이름이 같은 method 둘이라 property로 쓰지 못하고
+`mesh.channel(channel).weight(value)`처럼 호출로 쓴다.
+
+0으로 내린다. socket은 그대로 열려 있고 처리 중이던 호출도 끝난다. 달라지는 것은 **새 호출의
+후보에서 빠지는 것**이다.
+
+```bash
+curl -i -u ops:tutorial-admin -X POST 'http://127.0.0.1:5381/admin/channels/profile/weight?value=0'
+# HTTP/1.1 200
+# Content-Type: application/json
+# {"channel":"profile","weight":0}
+```
+
+이 tutorial은 `profile` channel을 맡은 node가 이 하나뿐이다. 그래서 0으로 내리면 고를 후보가
+남지 않아 호출이 그대로 실패한다.
+
+```bash
+curl -i http://127.0.0.1:5380/players/p1/profile
+# HTTP/1.1 503
+# Content-Type: application/json
+# {"error":"unavailable","message":"one-way route is not connected"}
+```
+
+응답을 기다리지 않는 단방향 호출도 같다. 받을 후보가 없다는 것은 보내는 시점에 드러나므로
+202가 아니라 같은 503이 온다.
+
+```bash
+curl -i -X POST http://127.0.0.1:5380/players/p1/logins
+# HTTP/1.1 503
+# Content-Type: application/json
+# {"error":"unavailable","message":"one-way route is not connected"}
+```
+
+503과 이 본문은 `Client`에 둔 `ZLinkErrorResponse`가 낸 것이다. 7절에서 다룬다.
+
+100으로 되돌리면 다시 받는다.
+
+```bash
+curl -i -u ops:tutorial-admin -X POST 'http://127.0.0.1:5381/admin/channels/profile/weight?value=100'
+# HTTP/1.1 200
+# {"channel":"profile","weight":100}
+
+curl http://127.0.0.1:5380/players/p1/profile
+# 200
+# {"playerId":"p1","nickname":"rookie","level":1}
+```
+
+등록하지 않은 channel 이름을 주면 기동 때와 같은 검사에 걸린다.
+
+```bash
+curl -i -u ops:tutorial-admin -X POST 'http://127.0.0.1:5381/admin/channels/no-such-channel/weight?value=50'
+# HTTP/1.1 500
+# {"timestamp":"2026-09-16T19:03:42.624+00:00","status":500,"error":"Internal Server Error",
+#  "path":"/admin/channels/no-such-channel/weight"}
+```
+
+`Server` 로그에 이유가 남는다.
+
+```
+systems.zlink.framework.errors.ZLinkConfigurationException: RouteMesh channel is not registered: no-such-channel
+```
+
+여기가 Spring Boot 기본 처리 그대로인 것은 7절의 매핑을 `Client`에만 두었기 때문이다.
+`Server`가 여는 HTTP는 이 운영 endpoint 하나뿐이라 그쪽에는 두지 않았다.
+
+weight를 100으로 되돌린 뒤 위 다섯 호출을 다시 해 보면 그대로 돈다. 확인한 결과다.
+
+| 호출 | 결과 |
+|---|---|
+| `GET /players/p1/profile` | 200 `{"playerId":"p1","nickname":"rookie","level":1}` |
+| `POST /players/p1/logins` | 202 |
+| `GET /ops/nodes/game-server-1/status` | 200 `{"meshName":"game","channelName":"(none)",...}` |
+| `POST /players/p1/tickets` | 200 `ticket-p1` |
+| `POST /notices` | 202 |
+
+### 7. 프레임워크 예외를 HTTP 상태코드로
+
+framework 호출이 실패하면 `ZLinkFrameworkException`이 올라온다. 그대로 두면 Spring Boot의
+기본 처리까지 가서 본문 없는 500 하나가 된다. 그러면 6절의 "지금 받을 node가 없다"와
+handler 안의 결함이 호출자에게 같은 모양으로 보인다.
+
+`Client`의 `ZLinkErrorResponse`가 `@RestControllerAdvice`·`@ExceptionHandler`로 이 예외를
+받아 error kind를 상태코드로 옮긴다. endpoint마다 try/catch를 두지 않는다.
+
+| ErrorKind | HTTP | 본문 `error` |
+|---|---|---|
+| `PROTOCOL_ERROR`·`TYPE_MISMATCH`·`INVALID_OPERATION` | 400 | `protocol_error`·`type_mismatch`·`invalid_operation` |
+| `NOT_FOUND` | 404 | `not_found` |
+| `ALREADY_EXISTS` | 409 | `already_exists` |
+| `REJECTED` | 403 | `rejected` |
+| `NOT_CONFIGURED`·`UNAVAILABLE`·`SHUTTING_DOWN` | 503 | `not_configured`·`unavailable`·`shutting_down` |
+| `DEADLINE_EXCEEDED` | 504 | `deadline_exceeded` |
+| `DATA_LOST`·그 밖 | 500 | `data_lost`·`internal_failure` |
+
+본문은 이 형태다.
+
+```json
+{"error": "unavailable", "message": "one-way route is not connected"}
+```
+
+C++ tutorial에는 이 파일이 없다. C++ framework가 자체 HTTP host를 갖고 있어 같은 표가
+framework 안에 있기 때문이다. Spring Boot·NestJS·ASP.NET 위에 올라가는 Kotlin·Java·Node·.NET
+tutorial은 각자 이 매핑을 든다. 표는 네 판이 같다.
+
+### 8. Spot — id로 부르기
+
+지금까지의 호출은 모두 대상을 이름으로 골랐다. channel 이름을 주면 Framework가 그 channel을
+맡은 node 중 하나를 고르고, routing id를 주면 그 node가 답했다. Spot은 다르다. **id 하나를
+주면 그 id의 방이 지금 있는 node로 간다.**
+
+```bash
+curl -X POST http://127.0.0.1:5380/rooms   -H 'Content-Type: application/json' -d '{"title":"lobby"}'
+# 7e4ad4fa-92d7-4043-8921-89b3df0112b0
+
+curl -i -X POST http://127.0.0.1:5380/rooms/7e4ad4fa-92d7-4043-8921-89b3df0112b0/chat   -H 'Content-Type: application/json' -d '{"playerId":"p1","text":"hello"}'
+# HTTP/1.1 202
+
+curl http://127.0.0.1:5380/rooms/7e4ad4fa-92d7-4043-8921-89b3df0112b0
+# {"title":"lobby","chat":["p1: hello"]}
+```
+
+id는 Framework가 만든다. 첫 응답에 따옴표가 없는 것은 ticket과 같은 이유다 — `String`을
+그대로 돌려주면 Spring이 `text/plain`으로 쓴다. 두 번째 호출은 응답을 기다리지 않는
+단방향이고, 세 번째는 방이 만든 답을 받는다. 방은 두 호출 사이에 상태를 들고 있었다.
+
+Kotlin 쪽에서 알아 둘 것은 다음과 같다.
+
+- **Spot 하나를 등록하는 순간 Location Store와 Relocation Store가 모두 필요하다.** 등록
+  자체가 조건이라 relocation을 꺼도 Relocation Store를 요구한다.
+- **방을 만드는 쪽에는 Kotlin 표면이 있고, 방을 부르는 쪽에는 없다.**
+  `ZLinkSpotManager.kotlin()`은 `.await()`로 끝나지만, `sendToSpot`·`requestToSpot`은 Java
+  표면을 그대로 쓰고 `kotlinx.coroutines.future.await`로 기다린다.
+- **Kotlin user Spot은 admit할 actor 타입을 언제나 이름 짓는다.** 이 방은 actor를 받지
+  않으므로 기반 타입 `ZLinkActor`를 적고 join을 모두 거절한다. .NET의 `IZLinkSpot`에는 그
+  타입 인자가 없다.
+
+### 9. Instance Spot — 첫 메시지가 만드는 큐
+
+만드는 호출이 없다. 그 id로 첫 메시지가 도착하면 Framework가 만들고 같은 메시지를 처리한다.
+
+```bash
+curl -X POST http://127.0.0.1:5380/match-queues/ranked \
+  -H 'Content-Type: application/json' -d '{"playerId":"p1"}'
+# {"waiting":1}
+
+curl -X POST http://127.0.0.1:5380/match-queues/ranked \
+  -H 'Content-Type: application/json' -d '{"playerId":"p2"}'
+# {"waiting":2}
+```
+
+큐는 넣은 것을 계속 들고 있다. 같은 id로 또 호출하면 숫자가 이어진다. 처음부터 다시 보려면
+다른 id를 쓴다.
+
+Kotlin 쪽에서 알아 둘 것은 다음과 같다.
+
+- **Instance Spot의 Kotlin 기반은 `ZLinkSuspendingInstanceSpot`이다.** 방의
+  `ZLinkSuspendingSpot`에 대응하며, actor 타입 인자도 create·join callback도 없다. handler는
+  방과 같은 `ZLinkSuspendingSpotRequestHandler`를 쓰고, 등록은 `addPacket<H>()`로 한다.
+- **부르는 쪽은 `requestToSpot(...)`에 `.instanceSpot("match-queue").inMesh("game")`을 더한다.**
+  아직 없는 큐를 어느 mesh에 어떤 stable type으로 만들지 이 두 호출이 정한다. 방을 부를 때와
+  같이 Java 표면을 `await()`로 기다린다.
+
+### 10. Actor — id로 부르는 플레이어
+
+방이 여럿이 함께 쓰는 자리라면 Actor는 개체 하나다. id를 **부르는 쪽이 정하고**, 같은 id로
+다시 만들면 있던 것을 돌려준다.
+
+```console
+$ curl -X POST http://127.0.0.1:5380/players/p7 -H 'Content-Type: application/json' -d '{"nickname":"rookie"}'
+created
+
+$ curl -X POST http://127.0.0.1:5380/players/p7 -H 'Content-Type: application/json' -d '{"nickname":"rookie"}'
+existing
+
+$ curl http://127.0.0.1:5380/players/p7
+{"playerId":"p7","nickname":"anonymous"}
+
+$ curl -i -X POST http://127.0.0.1:5380/players/p7/nickname -H 'Content-Type: application/json' -d '{"nickname":"veteran"}'
+HTTP/1.1 202
+
+$ curl http://127.0.0.1:5380/players/p7
+{"playerId":"p7","nickname":"veteran"}
+```
+
+Kotlin 쪽에서 알아 둘 것은 다음과 같다.
+
+- **Actor는 생성자로 만들어지지 않는다.** `PlayerFactory`가 만들고, 의존성이 필요하면 거기서
+  받는다.
+- **actor handler에는 Kotlin 표면이 있다.** `ZLinkSuspendingEntrySpotActor*Handler`를 구현하면
+  `suspend fun handle(...)`을 그대로 쓴다.
+- **Actor를 만들고 부르는 쪽은 Java 표면이다.** `ZLinkActorManager`·`ZLinkActorClient`에는
+  `kotlin()` wrapper가 없어 `kotlinx.coroutines.future.await`로 기다린다.
+
+### 11. Location — 위치 조회
+
+Spot과 Actor는 id로만 불렀고, 어디에 있는지는 Framework가 찾았다. 그 기록을 직접 읽는
+호출이다.
+
+```console
+$ curl http://127.0.0.1:5380/locations/rooms/5613196d-2989-439f-89a1-ed19ad612184
+{"spotId":"5613196d-2989-439f-89a1-ed19ad612184","node":"game-server-1"}
+
+$ curl http://127.0.0.1:5380/locations/players/p7
+{"actorId":"p7","node":"game-server-1"}
+
+$ curl -i http://127.0.0.1:5380/locations/players/ghost
+HTTP/1.1 404
+```
+
+조회는 Location Store만 읽고 대상에게는 아무것도 보내지 않는다. 지금 메시지를 받을 수 있는
+대상만 답하므로, 만들어지는 중이거나 옮겨 가는 중이면 빈 값이 온다.
+
+### 12. STREAM과 Session-Actor 연결
+
+외부 client가 TCP로 붙는다. framework가 아니라 connector만 의존한다.
+
+```console
+$ kotlin/StreamClient/build/install/StreamClient/bin/StreamClient
+connected: true
+round trip: 339ms        # STREAM request/reply
+actor bound: p1
+bound player: p1         # 연결에 Actor가 하나인 상태
+pushed: speedy, actor: p1 # connector에서 handle 없이 전송·수신
+actor bound: p2
+bound player: p2
+actor handle: p1
+actor handle: p2
+received actor id: p1
+received actor id: p2
+pushed: speedy-p1, actor: p1
+pushed: speedy-p2, actor: p2
+```
+
+`pushed`는 nickname 변경 요청의 응답이 아닌 **player가 같은 연결로 보낸 알림**이다.
+Actor가 하나 연결된 동안 connector에서 handle 없이 전송한다. 두 Actor가 연결되면 각
+handle로 전송하며, handle별 callback으로 알림을 받는다. connector 수준 callback도
+메시지의 Actor ID로 발신 Actor를 구분한다.
+
+Kotlin 쪽에서 알아 둘 것은 다음과 같다.
+
+- **session에도 suspending 표면이 있다.** `ZLinkSuspendingSession`과
+  `ZLinkSuspendingTypedSessionPacketHandler`를 쓴다.
+- **suspending session handler는 타입으로 등록된다.** `addSessionPacketHandler(Class<*>)`가
+  타입 인자를 묶지 않기 때문이다. channel handler의 handler group 우회가 여기서는 필요 없다.
+- **`packetName()`을 직접 적는다.** Java의 session handler는 `messageType()` 하나로 끝난다.
+- **`StreamClient`는 Kotlin wrapper를 사용한다.** `actorBound()`와 `actorUnbound()`를
+  coroutine에서 수집한다. Actor가 하나일 때는 connector의 `send(...).await()`로 전송하고,
+  둘일 때는 각 Actor handle의 `send(...).await()`와 typed `on`을 사용한다.
+
+### 13. HTTP 표면 운영 기능
+
+Server의 admin route는 tutorial 고정 자격 증명으로 보호된다. 설정 파일을 두지 않는
+tutorial이므로 자격 증명을 코드에 두었다.
+
+```bash
+curl -i -X POST 'http://127.0.0.1:5381/admin/channels/profile/weight?value=2'
+# 401
+# WWW-Authenticate: Basic realm="tutorial-admin"
+
+curl -i -u ops:tutorial-admin -X POST \
+  'http://127.0.0.1:5381/admin/channels/profile/weight?value=2'
+# 200
+# {"channel":"profile","weight":2}
+```
+
+Client는 요청이 `Accept-Encoding: gzip`을 포함할 때만 room JSON을 gzip으로 보낸다.
+옛 단수 경로는 path-absolute Location으로 301을 낸다.
+
+```bash
+curl -i -H 'Accept-Encoding: gzip' http://127.0.0.1:5380/rooms/<roomId>
+# 200
+# Content-Encoding: gzip
+
+curl -i http://127.0.0.1:5380/player/p1
+# 301
+# Location: /players/p1
+```
+
+export는 `application/x-ndjson`을 줄마다 flush하는 chunked 응답이고, import는 같은
+content type의 chunked body를 줄 단위로 읽어 chat으로 전달한다.
+
+```bash
+curl -i http://127.0.0.1:5380/rooms/<roomId>/export
+# 200
+# Transfer-Encoding: chunked
+# Content-Type: application/x-ndjson
+
+curl -i -X POST http://127.0.0.1:5380/rooms/<roomId>/import \
+  -H 'Content-Type: application/x-ndjson' \
+  --data-binary $'{"playerId":"p2","text":"one"}\n{"playerId":"p2","text":"two"}\n'
+# 200
+# {"imported":2}
+
+## Kotlin 표면과 Java 표면
+
+Kotlin 패키지 `zlink-framework-kotlin`은 Java 런타임 위에 얹히는 것이라, 이 프로그램도
+두 표면을 섞어 쓴다.
+
+### Kotlin 전용 표면을 쓴 곳
+
+| 위치 | 쓴 것 |
+|---|---|
+| `Server` handler 넷 | `ZLinkSuspendingRequestHandler` / `ZLinkSuspendingSendHandler` / `ZLinkSuspendingPublishHandler` / `ZLinkSuspendingRouteRequestHandler` — 본문이 `suspend fun`이고 응답을 그대로 돌려준다 |
+| `ServerApplication` | `options.useCoroutineHandlers(Dispatchers.Default)` — 위 handler를 부를 invoker를 단다 |
+| `Client` 호출 넷 | `ZLinkRouteClient.kotlin()` / `ZLinkFanoutClient.kotlin()`으로 감싼 뒤 `requestToChannel<TReply>(...)`, `requestToNode<TReply>(...)`, `.await()` |
+
+`requestToChannel<PlayerProfile>(...)`처럼 응답 타입이 reified 타입 인자다. Java 표면의
+`.submit(PlayerProfile::class.java)`를 쓰지 않는다.
+
+### Java 표면을 그대로 쓴 곳
+
+| 위치 | 쓴 것 |
+|---|---|
+| 등록 전부 | `ZLinkFrameworkOptions`, `ZLinkMeshNodeBuilder`, `ClientServerChannelBuilder`, `FanoutChannelBuilder` |
+| filter | `ZLinkHandlerFilter` — Kotlin filter interface는 없다. `suspend fun`이 아니라 `CompletionStage`를 받고 돌려준다 |
+| handler context | `ZLinkMessageContext`, `ZLinkRouteMessageContext`, `ZLinkPublishMessageContext` |
+| routing id | `systems.zlink.contracts.core.RoutingId` |
+| 실행 중 weight | `ZLinkRouteMeshRuntimeOptions` — bean으로 주입받는다. Kotlin 대응물이 없고 `weight()`가 property도 아니다 |
+| 예외 매핑 | `ZLinkFrameworkException`·`ZLinkFrameworkErrorKind` — Kotlin 대응물이 없다. `kind()`도 property가 아니라 호출로 쓴다 |
+
+Kotlin DSL 확장(`routeMesh { }`, `channelName(name) { }`)도 있지만 이 프로그램은 쓰지 않는다.
+Java builder를 그대로 이어 쓰는 쪽이 등록 순서를 읽기 쉬워서다.
+
+### suspending handler는 타입으로 등록할 수 없다
+
+Java builder의 `addRequestHandler`·`addSendHandler`는 타입 인자를
+`THandler extends ZLinkRequestHandler<...>`로 묶는다. `ZLinkSuspendingRequestHandler`는
+`ZLinkRequestHandler`를 구현하지 않으므로 이 자리에 넣을 수 없다. 그래서 RouteMesh channel과
+ClientServer channel은 **handler group**으로 등록한다.
+
+```kotlin
+// 각 handler class에
+@ZLinkHandlerGroup(HandlerGroups.PROFILE)
+
+// 등록 쪽에
+options.addHandlersFromPackageOf(GetPlayerProfileHandler::class.java)
+mesh.channelName("profile").server().addHandlerGroup(HandlerGroups.PROFILE)
+```
+
+반대로 node 직접 호출과 fanout은 타입으로 등록한다. `ZLinkMeshNodeBuilder`에는
+`addHandlerGroup`이 없고, `FanoutChannelBuilder.addPublishHandler(Class, Class)`는 타입
+인자를 묶지 않기 때문이다.
+
+### 64비트 정수는 문자열로 간다
+
+framework-json codec(`ZLinkFrameworkJsonProfile`)은 `Long`을 십진 JSON 문자열로 싣고
+그렇게만 읽는다. `NodeStatus.processId`를 `Long`이 아니라 `Int`로 둔 것은 그래서다.
+
+## 문서가 읽는 마커
+
+문서는 코드를 손으로 옮겨 적지 않고 이 파일들에서 구간을 읽는다. 구간은 소스의 `--8<--`
+마커가 정한다. 이름은 .NET·Java tutorial과 같게 두었다.
+
+| 마커 | 자리 |
+|---|---|
+| `channel-contracts` | `Shared/.../Contracts.kt` |
+| `clientserver-contracts` | `Shared/.../Contracts.kt` |
+| `fanout-contracts` | `Shared/.../Contracts.kt` |
+| `node-direct-contracts` | `Shared/.../Contracts.kt` |
+| `channel-request-handler` | `Server/.../channel/GetPlayerProfileHandler.kt` |
+| `channel-send-handler` | `Server/.../channel/RecordLoginHandler.kt` |
+| `clientserver-handler` | `Server/.../channel/IssueSessionTicketHandler.kt` |
+| `fanout-handler` | `Server/.../channel/MaintenanceNoticeSubscriber.kt` |
+| `node-direct-handler` | `Server/.../ops/NodeStatusHandler.kt` |
+| `filter-implementation` | `Server/.../dispatch/CallLogFilter.kt` |
+| `coroutine-handlers` | `Server/.../ServerApplication.kt` |
+| `filter-register` | `Server/.../ServerApplication.kt` |
+| `mesh-register` | `Server/.../ServerApplication.kt` |
+| `channel-register` | `Server/.../ServerApplication.kt` |
+| `node-direct-register` | `Server/.../ServerApplication.kt` |
+| `clientserver-register` | `Server/.../ServerApplication.kt` |
+| `fanout-subscribe` | `Server/.../ServerApplication.kt` |
+| `weight-runtime` | `Server/.../AdminEndpoints.kt` |
+| `channel-client-register` | `Client/.../ClientApplication.kt` |
+| `clientserver-client-register` | `Client/.../ClientApplication.kt` |
+| `fanout-publish-register` | `Client/.../ClientApplication.kt` |
+| `channel-request-call` | `Client/.../PlayerEndpoints.kt` |
+| `channel-send-call` | `Client/.../PlayerEndpoints.kt` |
+| `clientserver-call` | `Client/.../PlayerEndpoints.kt` |
+| `node-direct-call` | `Client/.../OpsEndpoints.kt` |
+| `fanout-call` | `Client/.../NoticeEndpoints.kt` |
+| `spot-contracts` | `Shared/.../Contracts.kt` |
+| `spot-class` · `spot-handlers` · `spot-handler-classes` | `Server/.../spots/GameRoom.kt` |
+| `location-store` · `relocation-store` | `Server/.../ServerApplication.kt` |
+| `object-server` · `spot-register` | `Server/.../ServerApplication.kt` |
+| `location-store-client` · `spot-client-register` | `Client/.../ClientApplication.kt` |
+| `spot-create-call` · `spot-message-call` | `Client/.../RoomEndpoints.kt` |
+| `spot-send-call` · `spot-request-call` | `Client/.../RoomEndpoints.kt`. `spot-message-call` 안에 나뉘어 있다 |
+| `instance-spot-contracts` | `Shared/.../Contracts.kt` |
+| `instance-spot-class` · `instance-spot-handler` | `Server/.../spots/MatchQueue.kt` |
+| `instance-spot-register` | `Server/.../ServerApplication.kt` |
+| `instance-spot-call` | `Client/.../MatchQueueEndpoints.kt` |
+| `location-find` | `Client/.../LocationEndpoints.kt` |
+| `actor-contracts` | `Shared/.../Contracts.kt` |
+| `actor-class` · `actor-factory` | `Server/.../actors/Player.kt` |
+| `actor-handlers` · `actor-send-handler` · `actor-request-handler` · `actor-push` | `Server/.../actors/PlayerHandlers.kt` |
+| `entry-spot` | `Server/.../spots/LobbySpot.kt` |
+| `actor-register` | `Server/.../ServerApplication.kt` |
+| `actor-create-call` · `actor-send-call` · `actor-request-call` | `Client/.../PlayerActorEndpoints.kt` |
+| `stream-contracts` · `session-actor-contracts` | `Shared/.../Contracts.kt` |
+| `session-class` · `session-actor-relay` | `Server/.../sessions/GameSession.kt` |
+| `session-handler` · `session-actor-bind` | `Server/.../sessions/SessionHandlers.kt` |
+| `stream-register` | `Server/.../ServerApplication.kt` |
+| `stream-client` · `session-actor-client` · `single-actor-send` · `actor-id-receive` · `actor-handle-events` · `actor-handle-send` · `actor-handle-per-handle-receive` · `actor-handle-send-call` · `actor-handle-receive` | `StreamClient/.../StreamClientProgram.kt` |
+| `http-client-create` | `HttpClient/.../HttpClientProgram.kt` |
+| `http-first-request` | `HttpClient/.../HttpClientProgram.kt` |
+| `http-request-shaping` | `HttpClient/.../HttpClientProgram.kt` |
+| `http-json-body` | `HttpClient/.../HttpClientProgram.kt` |
+| `http-response-kinds` | `HttpClient/.../HttpClientProgram.kt` |
+| `http-compressed-response` | `HttpClient/.../HttpClientProgram.kt` |
+| `http-redirect` | `HttpClient/.../HttpClientProgram.kt` |
+| `http-basic-auth` | `HttpClient/.../HttpClientProgram.kt` |
+| `http-download-stream` | `HttpClient/.../HttpClientProgram.kt` |
+| `http-upload-stream` | `HttpClient/.../HttpClientProgram.kt` |
+| `http-error-kinds` | `HttpClient/.../HttpClientProgram.kt` |
+| `error-mapping` | `Client/.../ZLinkErrorResponse.kt` |
+
+마커 이름을 바꾸면 그 구간을 읽는 문서가 조용히 빈 코드 블록을 낸다. 이름을 바꿀 때는
+문서를 함께 고친다.

@@ -1,0 +1,51 @@
+package systems.zlink.samples.kotlin.deliverydispatch.server.tracking.handlers
+
+import systems.zlink.framework.ZLinkMessageContext
+import systems.zlink.framework.actors.ZLinkActorClient
+import systems.zlink.framework.actors.ZLinkActorDirectory
+import systems.zlink.framework.handlers.ZLinkHandlerGroup
+import systems.zlink.framework.kotlin.ZLinkSuspendingRequestHandler
+import systems.zlink.framework.kotlin.await
+import systems.zlink.framework.kotlin.kotlin
+import systems.zlink.samples.kotlin.deliverydispatch.server.configuration.DeliveryEvidenceStore
+import systems.zlink.samples.kotlin.deliverydispatch.shared.contracts.DeliveryStatusChangedReq
+import systems.zlink.samples.kotlin.deliverydispatch.shared.contracts.DeliveryStatusChangedRes
+import systems.zlink.samples.kotlin.deliverydispatch.shared.contracts.DeliveryStatusUpdatedMsg
+
+@ZLinkHandlerGroup("tracking")
+class DeliveryStatusChangedHandler(
+    private val evidenceStore: DeliveryEvidenceStore,
+    private val actors: ZLinkActorClient,
+    private val actorRefs: ZLinkActorDirectory,
+) : ZLinkSuspendingRequestHandler<DeliveryStatusChangedReq, DeliveryStatusChangedRes> {
+    private val kotlinActors = actors.kotlin()
+
+    override suspend fun handle(
+        request: DeliveryStatusChangedReq,
+        context: ZLinkMessageContext,
+    ): DeliveryStatusChangedRes {
+        // --8<-- [start:doc-dd-tracking-forward]
+        evidenceStore.append(request)
+        if (request.status.name == "Delivered") {
+            println("deliverydispatch-tracking status=Delivered delivery=${request.deliveryId}")
+        }
+        val actorRef =
+            actorRefs.find(request.customerId).await().orElseThrow {
+                IllegalStateException("customer actor not found: ${request.customerId}")
+            }
+        kotlinActors
+            .sendToActor(
+                actorRef.actorId,
+                DeliveryStatusUpdatedMsg(
+                    deliveryId = request.deliveryId,
+                    customerId = request.customerId,
+                    status = request.status,
+                    courierId = request.courierId,
+                    occurredAt = request.occurredAt,
+                ),
+            )
+            .await()
+        // --8<-- [end:doc-dd-tracking-forward]
+        return DeliveryStatusChangedRes(request.deliveryId, request.status)
+    }
+}
