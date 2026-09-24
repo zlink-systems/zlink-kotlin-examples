@@ -6,8 +6,7 @@ Full walkthrough (all 12 stages, the Kotlin/Java surface split, and the
 release CI job runs verbatim: prerequisites, download and install, build,
 run, verify, and troubleshooting.
 
-Kotlin has no directory of its own in this repository; it lives next to the
-Java sources in the `zlink-java-examples` repository, under `tutorial/kotlin/`.
+The Kotlin sources are in the `kotlin/` language subdirectory of this Gradle project.
 
 ## Prerequisites
 
@@ -44,14 +43,14 @@ libraries, so no extra native setup is needed on Windows either.
 
 ## Download and install
 
-This tutorial runs from `tutorial/kotlin/` in the `zlink-java-examples` repository and only
+This tutorial runs from `tutorial/kotlin/` in the `zlink-kotlin-examples` repository and only
 references `systems.zlink:zlink-framework-*` packages from Maven Central. `kotlin/`
 builds standalone as long as it travels with `../` (the tutorial root)'s
 `settings.gradle.kts`, `gradle/libs.versions.toml`, and wrapper. There is
 nothing separate to download or install: the Gradle wrapper fetches Gradle,
 and Gradle fetches the packages above from Maven Central.
 
-Clone the `zlink-java-examples` repository and run all commands below from its tutorial root;
+Clone the `zlink-kotlin-examples` repository and run all commands below from its tutorial root;
 `../` from here is the `tutorial/kotlin/` project.
 
 ## Build
@@ -191,6 +190,12 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:5380/players/p1/profile'
   running in another terminal until its log shows
   `Ready to accept connections`, then run the tutorial.
 
+- **Port 6379 is already in use by Redis.** If
+  `redis-cli -h 127.0.0.1 -p 6379 ping` returns `PONG`, use that Redis and
+  skip `docker run`. Stop any processes from a previous tutorial run, execute
+  the `zlink-tutorial-kotlin:*` key cleanup command below, then restart the
+  Server and Client. Do not stop the existing Redis when the tutorial ends.
+
 - **`Address already in use`
   (5380/5381/7601/7602/7611/7612/7621).** A previous run is still up. Stop
   both processes and run again.
@@ -202,12 +207,20 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:5380/players/p1/profile'
 
 - **`ZLinkConfigurationException: MeshNode descriptor publication failed
   [mesh=game, status=REJECTED_CONFLICT]`, or the profile call keeps
-  returning `503 one-way route is not connected`.** This happens when
-  another run left a mesh descriptor behind under the
-  `zlink-tutorial-kotlin:` key prefix in the same Redis. Clear only that
-  prefix and restart the Server — leave other languages' tutorial keys
-  alone.
+  returning `503 one-way route is not connected`.** After a forced stop, the
+  previous owner lease can remain valid for up to 15 seconds
+  ([default owner lease TTL](https://github.com/zlink-systems/zlink/blob/main/framework/doc/framework/common/spec/server/05-location-relocation/01-location-runtime.ko.md#L670-L674)).
+  Wait for it to expire, then start the Server again; a failed start does not
+  retry. To restart immediately, stop earlier tutorial processes and clear
+  only the `zlink-tutorial-kotlin:` keys with the command below. Leave other
+  languages' tutorial keys intact.
 
   ```bash
   redis-cli --scan --pattern 'zlink-tutorial-kotlin:*' | xargs -r redis-cli del
+  ```
+
+  On Windows, run this with `redis-cli` connected to the same Redis:
+
+  ```powershell
+  redis-cli --scan --pattern 'zlink-tutorial-kotlin:*' | ForEach-Object { redis-cli DEL $_ | Out-Null }
   ```

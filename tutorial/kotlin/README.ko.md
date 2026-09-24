@@ -49,14 +49,14 @@ Kotlin source는 이 Gradle project의 language subdirectory에 있다. [`../../
 ## 내려받기와 설치
 
 문서가 보여주는 코드와 독자가 Maven Central에서 받는 라이브러리를 같은 것으로 유지한다.
-이 tutorial은 `zlink-java-examples` 저장소의 `tutorial/kotlin/`에서 실행하고
+이 tutorial은 `zlink-kotlin-examples` 저장소의 `tutorial/kotlin/`에서 실행하고
 `systems.zlink:zlink-framework-*` 패키지만 참조한다. `kotlin/`은 `../`(tutorial 루트)의 `settings.gradle.kts`·
 `gradle/libs.versions.toml`·wrapper와 함께 옮기면 그대로 빌드된다. 버전은
 [`../gradle/libs.versions.toml`](../gradle/libs.versions.toml)에 있다. 별도로 내려받거나
 설치할 것은 없다 — Gradle wrapper가 Gradle을, Gradle이 위 패키지를 Maven Central에서
 내려받는다.
 
-아래 명령은 `zlink-java-examples` 저장소를 clone한 뒤 tutorial 루트를 현재 위치로 두고
+아래 명령은 `zlink-kotlin-examples` 저장소를 clone한 뒤 tutorial 루트를 현재 위치로 두고
 실행한다. `../` 아래에 이 README가 있는 `tutorial/kotlin/`이 있다.
 
 ## 빌드
@@ -152,6 +152,11 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:5380/players/p1/profile'
   기동 중이다. `docker run --rm -p 6379:6379 redis`를 다른 터미널에 띄워 두고, 로그에
   `Ready to accept connections`가 뜬 뒤 tutorial을 실행한다.
 
+- **Redis용 6379 포트가 이미 사용 중이다.** `redis-cli -h 127.0.0.1 -p 6379 ping`의
+  응답이 `PONG`이면 기존 Redis를 사용한다. `docker run`을 생략하고 이전 tutorial
+  process를 종료한 뒤 아래 `zlink-tutorial-kotlin:*` 키 정리 명령을 실행한다. 그런 다음
+  Server와 Client를 다시 실행한다. 기존 Redis는 tutorial 종료 시에도 중지하지 않는다.
+
 - **`Address already in use` (5380/5381/7601/7602/7611/7612/7621).** 이전 실행이 아직
   떠 있다. 두 process를 모두 종료한 뒤 다시 실행한다.
 
@@ -162,12 +167,20 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:5380/players/p1/profile'
 
 - **`ZLinkConfigurationException: MeshNode descriptor publication failed [mesh=game,
   status=REJECTED_CONFLICT]`, 또는 프로필 호출이 계속 `503 one-way route is not
-  connected`를 낸다.** 같은 Redis를 다른 실행이 먼저 써서 `zlink-tutorial-kotlin:` 키
-  아래 mesh descriptor가 남아 있을 때 나온다. 그 키만 지우고 Server부터 다시 실행한다 —
-  다른 언어의 tutorial은 건드리지 않는다.
+  connected`를 낸다.** 강제 종료 후 이전 owner lease는 최대 15초 동안 유효할 수 있다
+  ([owner lease TTL 기본값](https://github.com/zlink-systems/zlink/blob/main/framework/doc/framework/common/spec/server/05-location-relocation/01-location-runtime.ko.md#L670-L674)).
+  만료될 때까지 기다린 뒤 Server를 다시 실행한다. 시작에 실패한 process는 자동으로
+  재시도하지 않는다. 즉시 다시 시작하려면 이전 tutorial process를 종료하고 아래 명령으로
+  `zlink-tutorial-kotlin:` 키만 삭제한다. 다른 언어의 tutorial 키는 지우지 않는다.
 
   ```bash
   redis-cli --scan --pattern 'zlink-tutorial-kotlin:*' | xargs -r redis-cli del
+  ```
+
+  Windows에서는 같은 Redis에 연결된 `redis-cli`로 다음 명령을 실행한다.
+
+  ```powershell
+  redis-cli --scan --pattern 'zlink-tutorial-kotlin:*' | ForEach-Object { redis-cli DEL $_ | Out-Null }
   ```
 
 ## 프로젝트
@@ -239,11 +252,9 @@ curl -i http://127.0.0.1:5380/ops/nodes/no-such-node/status
 
 1. 받는 node가 `setRoutingId`로 id를 고정해야 한다. 고정하지 않으면 생성된 id라 부르는
    쪽이 적을 수 없다.
-2. `peerConnections().connect(RoutingId, endpoint)`를 쓴다면, 받는 node가
-   `setAdvertiseHost`로 **부르는 쪽이 적은 것과 같은 endpoint 문자열**을 알려야 한다.
-   이 형태의 connect는 상대가 알리는 endpoint를 문자열 그대로 비교한다.
-   `listen("tcp://0.0.0.0:7601")`만 해 두면 node는 `tcp://0.0.0.0:7601`을 알리는데 부르는
-   쪽은 `tcp://127.0.0.1:7601`을 적으므로 peer가 거부된다.
+2. `peerConnections().connect(RoutingId, endpoint)`를 쓴다면, 받는 node가 광고하는
+   endpoint는 **부르는 쪽이 적은 것과 같은 endpoint 문자열**이어야 한다.
+   이 예제의 listen 주소와 `setAdvertiseHost`는 모두 `127.0.0.1`이다.
 
 `connect(RoutingId, endpoint)`는 **node 직접 호출의 전제가 아니다.** peer가 붙고 나면
 `connect(endpoint)`만 쓴 client도 routing id로 그 node를 부를 수 있다. 확인한 결과다.
