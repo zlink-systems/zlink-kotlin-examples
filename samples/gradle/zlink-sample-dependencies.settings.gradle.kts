@@ -4,16 +4,19 @@ val frameworkRoot = generateSequence(settingsDir.parentFile) { it.parentFile }
             candidate.resolve("gradle/zlink-local-packages.settings.gradle.kts").isFile
     }
 
-val samplesRoot = generateSequence(settingsDir) { it.parentFile }
-    .first { it.resolve("gradle/zlink-sample-dependencies.settings.gradle.kts").isFile }
-apply(from = samplesRoot.resolve("gradle/zlink-jvm-baseline.settings.gradle.kts"))
+// The samples build and the perf build (framework/languages/java/perf, issue #1171) share this script; the perf
+// build sits beside samples/, so the walk also looks for a samples/gradle folder.
+val samplesGradleDir = generateSequence(settingsDir) { it.parentFile }
+    .flatMap { sequenceOf(it.resolve("gradle"), it.resolve("samples/gradle")) }
+    .first { it.resolve("zlink-sample-dependencies.settings.gradle.kts").isFile }
+apply(from = samplesGradleDir.resolve("zlink-jvm-baseline.settings.gradle.kts"))
 
 val packageMode = providers.gradleProperty("zlink.samples.packageMode")
     .map(String::toBoolean)
     .orElse(frameworkRoot == null)
     .get()
 val frameworkVersionDefault = if (packageMode) {
-    providers.provider { "0.26.0" }
+    providers.provider { "0.27.0" }
 } else {
     val localFrameworkRoot = checkNotNull(frameworkRoot) {
         "Developer mode requires the zlink Java framework source above the samples directory. " +
@@ -45,7 +48,7 @@ if (packageMode && !providers.environmentVariable("ZLINK_JAVA_BINDINGS_SOURCE").
 
 if (packageMode) {
     val bindingsVersion = providers.gradleProperty("zlink.bindingsVersion")
-        .orElse("1.10.0")
+        .orElse("1.14.0")
         .get()
     dependencyResolutionManagement {
         versionCatalogs {

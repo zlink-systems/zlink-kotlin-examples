@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+$script:ZlinkSampleFrameworkLifecycleMarkerPattern = 'ZLINK_FRAMEWORK_(READY|TERMINATION)'
 
 if (-not (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue)) {
     $IsWindows = $env:OS -eq "Windows_NT"
@@ -45,13 +46,56 @@ function Write-ZlinkSampleFrameworkFailureEvidence {
             Write-Host "[$nodeName] $line"
         }
         Write-Host "--- termination markers node=$nodeName ---"
-        foreach ($line in @(
-            Get-Content -LiteralPath $log.FullName -ErrorAction SilentlyContinue |
-                Select-String -Pattern 'ZLINK_FRAMEWORK_(READY|TERMINATION)'
-        )) {
-            Write-Host "[$nodeName] $($line.Line)"
+        foreach ($path in @($log.FullName, (Join-Path $LogDir "$nodeName.err.log"))) {
+            foreach ($line in @(
+                Get-Content -LiteralPath $path -ErrorAction SilentlyContinue |
+                    Select-String -Pattern $script:ZlinkSampleFrameworkLifecycleMarkerPattern
+            )) {
+                Write-Host "[$nodeName] $($line.Line)"
+            }
         }
         Write-Host "=== End framework lifecycle failure evidence node=$nodeName ==="
+    }
+}
+
+function Assert-ZlinkSampleFrameworkTermination {
+    param(
+        [Parameter(Mandatory = $true)][string]$LogDir,
+        [Parameter(Mandatory = $true)][string[]]$RoleLogs,
+        [hashtable]$RoleLogOffsets = @{}
+    )
+
+    if ($RoleLogs.Count -eq 0) {
+        throw "Framework role logs are not configured for this sample: $LogDir"
+    }
+    foreach ($roleLog in $RoleLogs) {
+        $logFile = Join-Path $LogDir $roleLog
+        if (-not (Test-Path -LiteralPath $logFile -PathType Leaf)) {
+            throw "Framework role log is missing: $logFile"
+        }
+        $errorLog = Join-Path $LogDir ($roleLog -replace '\.log$', '.err.log')
+        $markers = [System.Collections.Generic.List[string]]::new()
+        foreach ($path in @($logFile, $errorLog)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+            $fileName = [IO.Path]::GetFileName($path)
+            $firstLine = if ($RoleLogOffsets.ContainsKey($fileName)) { [int]$RoleLogOffsets[$fileName] } else { 1 }
+            foreach ($match in @(
+                Get-Content -LiteralPath $path | Select-Object -Skip ($firstLine - 1) |
+                    Select-String -Pattern $script:ZlinkSampleFrameworkLifecycleMarkerPattern
+            )) {
+                $markers.Add($match.Line)
+            }
+        }
+        $ready = @($markers | Where-Object { $_.Contains('ZLINK_FRAMEWORK_READY') }).Count
+        $termination = @($markers | Where-Object { $_.Contains('ZLINK_FRAMEWORK_TERMINATION outcome=') }).Count
+        $stopped = @($markers | Where-Object { $_.Contains('ZLINK_FRAMEWORK_TERMINATION outcome=STOPPED reason=NONE') }).Count
+        $forceStopped = @($markers | Where-Object { $_.Contains('ZLINK_FRAMEWORK_TERMINATION outcome=FORCE_STOPPED') }).Count
+        $counts = "READY=$ready TERMINATION=$termination STOPPED_NONE=$stopped FORCE_STOPPED=$forceStopped"
+        if ($ready -ne 1 -or $termination -ne 1 -or $stopped -ne 1 -or $forceStopped -ne 0) {
+            Write-ZlinkSampleFrameworkFailureEvidence $LogDir
+            throw "Framework lifecycle evidence is incomplete: $logFile $counts"
+        }
+        Write-Host "Framework lifecycle verified role=$roleLog $counts"
     }
 }
 
@@ -364,51 +408,37 @@ function Invoke-ZlinkSampleGradleBuild {
     }
 
     try {
-        $temporarySettingsPath = $null
+        $buildArguments = $Arguments
+        $buildRoot = $null
         if ($SettingsPath) {
-            $settingsSourcePath = Join-Path (Get-Location) $SettingsPath
-            $settingsTargetPath = Join-Path (Get-Location) "settings.gradle.kts"
+            $sampleDir = (Get-Location).Path
+            $settingsSourcePath = Join-Path $sampleDir $SettingsPath
             if (-not (Test-Path -LiteralPath $settingsSourcePath -PathType Leaf)) {
                 throw "Missing standalone Gradle settings: $settingsSourcePath"
             }
-            if (Test-Path -LiteralPath $settingsTargetPath) {
-                # A run killed hard leaves the staged copy behind. The staged copy
-                # is ours only while it is a plain file byte-identical to the
-                # standalone source; anything else is the developer's own settings
-                # file and is never replaced.
-                $existingSettings = Get-Item -LiteralPath $settingsTargetPath -Force
-                $stagedCopy = ($existingSettings -is [System.IO.FileInfo]) -and
-                    -not ($existingSettings.Attributes.HasFlag(
-                        [System.IO.FileAttributes]::ReparsePoint)) -and
-                    (Get-FileHash -LiteralPath $settingsSourcePath -Algorithm SHA256).Hash -eq
-                        (Get-FileHash -LiteralPath $settingsTargetPath -Algorithm SHA256).Hash
-                if (-not $stagedCopy) {
-                    throw "Refusing to replace existing $settingsTargetPath"
-                }
-                [Console]::Error.WriteLine(
-                    "Taking over the $settingsTargetPath left by an interrupted run.")
-                Remove-Item -LiteralPath $settingsTargetPath -Force
-            }
-            Copy-Item -LiteralPath $settingsSourcePath -Destination $settingsTargetPath
-            $temporarySettingsPath = $settingsTargetPath
+            $buildRoot = (Resolve-Path -LiteralPath (Join-Path $sampleDir "../..")).Path
+            $language = Split-Path (Split-Path $sampleDir -Parent) -Leaf
+            $sample = Split-Path $sampleDir -Leaf
+            $buildArguments = @($Arguments | ForEach-Object {
+                if ($_.StartsWith(":")) { ":${language}:${sample}${_}" } else { $_ }
+            })
+            Push-Location $buildRoot
         }
         $previousErrorActionPreference = $ErrorActionPreference
         try {
             # Windows PowerShell wraps legitimate Gradle stderr warnings as
             # NativeCommandError records. The native exit code remains the verdict.
             $ErrorActionPreference = "Continue"
-            & $GradleExecutable @Arguments
+            & $GradleExecutable @buildArguments
             $gradleExitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $previousErrorActionPreference
         }
         if ($gradleExitCode -ne 0) {
-            throw "Gradle build failed: $($Arguments -join ' ')"
+            throw "Gradle build failed: $($buildArguments -join ' ')"
         }
     } finally {
-        if ($temporarySettingsPath) {
-            Remove-Item -LiteralPath $temporarySettingsPath -Force -ErrorAction SilentlyContinue
-        }
+        if ($buildRoot) { Pop-Location }
         $lockStream.Dispose()
     }
 }

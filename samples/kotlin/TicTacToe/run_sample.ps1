@@ -75,19 +75,16 @@ function Wait-Endpoint {
 function Wait-LogCount {
     param([string]$LogPath, [string]$Pattern, [int]$Expected)
     for ($attempt = 0; $attempt -lt 300; $attempt++) {
-        $count = @(Select-String -Path $LogPath -Pattern $Pattern -SimpleMatch -ErrorAction SilentlyContinue).Count
+        $count = 0
+        if (Test-Path -Path $LogPath) {
+            $count = @(Select-String -Path $LogPath -Pattern $Pattern -SimpleMatch).Count
+        }
         if ($count -eq $Expected) {
             return
         }
         Start-Sleep -Milliseconds 100
     }
     throw "Timed out waiting for $Expected '$Pattern' in $LogPath"
-}
-
-function Invoke-Gradle {
-    param([string[]]$Arguments)
-    $buildArguments = @("--no-parallel", "--max-workers=1") + $Arguments
-    Invoke-ZlinkSampleGradleBuild -GradleExecutable $Gradle -Arguments $buildArguments
 }
 
 function Start-SampleRole {
